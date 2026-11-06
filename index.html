@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <!--
   Legacy Line Charts — Invoice Builder
+  v1.1 (11/6/26): Season rolls over July 1 (was June 1); flip month is one constant, SEASON_FLIP_MONTH.
   v1.0 (11/6/26): First build. Clones the Google Doc invoice; live PDF preview; direct PDF download;
                   live MSHSL team DB (logos/colors); contacts CSV import; invoice history with paid tracking.
 -->
@@ -130,7 +131,7 @@
 <div class="topbar">
   <div class="brand">
     <div class="badge">LLC</div>
-    <h1>Invoice <span>Builder</span> <span class="ver">v1.0</span></h1>
+    <h1>Invoice <span>Builder</span> <span class="ver">v1.1</span></h1>
   </div>
   <div class="tabs">
     <button class="tab active" data-view="build">Build</button>
@@ -154,7 +155,7 @@
         <div><label>Due date</label><input id="f-due" type="date"></div>
       </div>
       <div class="row">
-        <div><label>Season</label><input id="f-season" placeholder="2026-27"></div>
+        <div><label>Season <span style="font-weight:400">(auto — rolls over July 1)</span></label><input id="f-season" placeholder="2026-27"></div>
         <div><label>Status</label>
           <div class="status-toggle">
             <button class="chip on" id="st-unpaid" type="button">Unpaid</button>
@@ -3032,7 +3033,8 @@ function pad(n){ return (n<10?'0':'')+n; }
 function iso(d){ return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
 function parseISO(s){ if(!s) return null; var p=s.split('-'); return new Date(+p[0], +p[1]-1, +p[2]); }
 function mdyy(s){ var d=parseISO(s); return d? (d.getMonth()+1)+'/'+d.getDate()+'/'+String(d.getFullYear()).slice(2) : ''; }
-function seasonFor(dateStr){ var d=parseISO(dateStr)||new Date(); var y=d.getFullYear(); var start = d.getMonth()>=5 ? y : y-1; return start+'-'+String(start+1).slice(2); }
+var SEASON_FLIP_MONTH = 7; // New season starts July 1 (1 = Jan … 7 = July). Change this one number to move the flip date.
+function seasonFor(dateStr){ var d=parseISO(dateStr)||new Date(); var y=d.getFullYear(); var start = (d.getMonth()+1)>=SEASON_FLIP_MONTH ? y : y-1; return start+'-'+String(start+1).slice(2); }
 function seasonShort(s){ var m=String(s||'').match(/(\d{4})\s*-\s*(\d{2,4})/); return m? m[1].slice(2)+'-'+m[2].slice(-2) : String(s||''); }
 function dueFor(dateStr){
   var d=parseISO(dateStr)||new Date();
@@ -3289,7 +3291,7 @@ function buildPDF(d, imgs){
   var jsPDF=window.jspdf.jsPDF;
   var doc=new jsPDF({unit:'pt', format:'letter', compress:true});
   var W=612, M=40, R=W-M, t=totals(d), paid=d.status==='paid';
-  doc.setProperties({ title:'Invoice #'+d.number+' — '+(d.teamName||''), author:settings.bizName, subject:'Invoice', creator:'LLC Invoice Builder v1.0' });
+  doc.setProperties({ title:'Invoice #'+d.number+' — '+(d.teamName||''), author:settings.bizName, subject:'Invoice', creator:'LLC Invoice Builder v1.1' });
 
   /* ===== header band ===== */
   doc.setFillColor(NAVY); doc.rect(0,0,W,124,'F');
@@ -3609,7 +3611,7 @@ $('settingsSave').onclick=function(){
 };
 $('s-contactsFile').onchange=function(e){ var f=e.target.files[0]; if(!f) return; f.text().then(importContacts); };
 $('exportBtn').onclick=function(){
-  var data={app:'LLC Invoice Builder', version:'1.0', exported:new Date().toISOString(), settings:settings, history:history, customers:customers, contacts:contacts};
+  var data={app:'LLC Invoice Builder', version:'1.1', exported:new Date().toISOString(), settings:settings, history:history, customers:customers, contacts:contacts};
   var a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,1)],{type:'application/json'}));
   a.download='LLC Invoice Backup '+iso(new Date())+'.json'; a.click(); setTimeout(function(){URL.revokeObjectURL(a.href);},2000);
 };
