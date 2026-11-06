@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <!--
   Legacy Line Charts — Invoice Builder
+  v1.2 (11/6/26): Coach name + email load live from the master coach Google Sheet (no CSV step); "↻ From coach list" button.
   v1.1 (11/6/26): Season rolls over July 1 (was June 1); flip month is one constant, SEASON_FLIP_MONTH.
   v1.0 (11/6/26): First build. Clones the Google Doc invoice; live PDF preview; direct PDF download;
                   live MSHSL team DB (logos/colors); contacts CSV import; invoice history with paid tracking.
@@ -131,7 +132,7 @@
 <div class="topbar">
   <div class="brand">
     <div class="badge">LLC</div>
-    <h1>Invoice <span>Builder</span> <span class="ver">v1.1</span></h1>
+    <h1>Invoice <span>Builder</span> <span class="ver">v1.2</span></h1>
   </div>
   <div class="tabs">
     <button class="tab active" data-view="build">Build</button>
@@ -188,7 +189,7 @@
     </div>
 
     <div class="card">
-      <h2>Bill To</h2>
+      <h2>Bill To <span class="spacer"></span><button class="btn small" id="refillCoach" type="button" title="Re-pull head coach name and email from your coach list">↻ From coach list</button></h2>
       <div class="row">
         <div><label>Name</label><input id="f-billname" placeholder="Andrew Floyd"></div>
         <div><label>Email / Phone</label><input id="f-contact" placeholder="coach@school.org"></div>
@@ -273,7 +274,7 @@
     <div class="row"><input id="s-logoFile" type="file" accept="image/*"><button class="btn small" id="s-logoClear" type="button">Remove logo</button></div>
 
     <h2 class="osw" style="margin-top:18px;font-size:15px">Coach contacts</h2>
-    <p class="note">In your <b>MN_HS_Hockey_Booster_Contacts_MASTER</b> sheet: <b>File → Download → CSV</b>, then load it here. Picking a team fills in the head coach, email and program automatically.</p>
+    <p class="note">Coaches load automatically from your <b>MN_HS_Hockey_Booster_Contacts_MASTER</b> Google Sheet every time this page opens (Head Coach Name + Primary email). Edit the sheet and the change shows up here on the next refresh. Backup option if the sheet can't be reached: <b>File → Download → CSV</b> in the sheet, then load it here.</p>
     <input id="s-contactsFile" type="file" accept=".csv,text/csv">
 
     <h2 class="osw" style="margin-top:18px;font-size:15px">Backup</h2>
@@ -3119,15 +3120,32 @@ function findTeam(text){
 /* ---------------- contacts ---------------- */
 function setContactsPill(){
   var p=$('contactsPill');
-  if(contacts.length){ p.textContent=contacts.length+' coach contacts'; p.className='pill ok'; }
-  else { p.textContent='No coach contacts'; p.className='pill'; }
+  if(contacts.length){ p.textContent=contacts.length+' coaches ('+(contactsSource==='live'?'live':'saved copy')+')'; p.className='pill '+(contactsSource==='live'?'ok':'warn'); }
+  else if(contactsSource==='offline'){ p.textContent='Coach list unavailable'; p.className='pill warn'; }
+  else { p.textContent='Loading coaches…'; p.className='pill'; }
 }
 function contactFor(school){
   var n=norm(school);
   for(var i=0;i<contacts.length;i++) if(norm(contacts[i].team)===n) return contacts[i];
   return null;
 }
-function importContacts(text){
+var CONTACTS_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1VJVl_kgBJt36syKjt6b0_-e77l0Wd0fWiO5ivgwnvuE/gviz/tq?tqx=out:csv&headers=1';
+var contactsSource = contacts.length ? 'saved' : '';
+function loadContacts(){
+  fetch(CONTACTS_SHEET_URL+'&t='+Date.now(),{cache:'no-store'}).then(function(r){ if(!r.ok) throw 0; return r.text(); }).then(function(txt){
+    if(/<html/i.test(txt.slice(0,300))) throw 0;          // sheet not shared → Google returns a sign-in page
+    if(importContacts(txt, true)){ contactsSource='live'; setContactsPill(); fillBillFromContacts(false); }
+  }).catch(function(){ contactsSource = contacts.length ? 'saved' : 'offline'; setContactsPill(); });
+}
+function fillBillFromContacts(force){ // fill coach name/email for the current team; force = overwrite what's there
+  var c=contactFor(draft.school); if(!c) return false;
+  var nm=titleCase(cleanCoach(c.coach));
+  if(nm && (force || !draft.billName)) draft.billName=nm;
+  if(c.email && (force || !draft.contact)) draft.contact=c.email;
+  if(c.program && (force || !draft.billOrg)) draft.billOrg=c.program;
+  fillForm(); return true;
+}
+function importContacts(text, quiet){
   var objs=rowsToObjects(parseCSV(text));
   var list=objs.map(function(o){
     return { team:pick(o,['Team']), program:pick(o,['Program / Booster Club','Program']),
@@ -3135,9 +3153,10 @@ function importContacts(text){
       asst:pick(o,['Assistant Coach Name']), asstEmail:pick(o,['Assistant Coach Email','Secondary email']),
       status:pick(o,['Response Status']) };
   }).filter(function(c){return c.team;});
-  if(!list.length){ toast('Couldn’t find a "Team" column in that CSV'); return; }
-  contacts=list; save(LS.contacts,contacts); setContactsPill(); renderCustChips();
-  toast('Loaded '+list.length+' coach contacts');
+  if(!list.length){ if(!quiet) toast('Couldn’t find a "Team" column in that CSV'); return false; }
+  contacts=list; save(LS.contacts,contacts); if(!quiet) contactsSource='file'; setContactsPill(); renderCustChips();
+  if(!quiet) toast('Loaded '+list.length+' coach contacts');
+  return true;
 }
 function cleanCoach(n){ return String(n||'').replace(/\s*\(.*?\)\s*/g,' ').replace(/^(dr|mr|mrs|ms)\.?\s+/i,'').trim(); }
 function titleCase(s){ return String(s||'').replace(/\b([a-z])/g,function(m){return m.toUpperCase();}); }
@@ -3200,12 +3219,15 @@ function chooseTeam(text){
   if(draft.school===t.school && draft.teamName===t.display) return;
   draft.teamName=t.display; draft.school=t.school; draft.logoUrl=t.logo;
   draft.primary=toHexColor(t.primary,NAVY); draft.secondary=toHexColor(t.secondary,GOLD);
-  var saved=customers[t.key], c=contactFor(t.school);
-  if(saved){ draft.billName=saved.billName||''; draft.billOrg=saved.billOrg||''; draft.billAddr=saved.billAddr||''; draft.contact=saved.contact||''; }
-  else if(c){ draft.billName=titleCase(cleanCoach(c.coach)); draft.billOrg=c.program||(t.school+' Boys HS Hockey'); draft.billAddr=''; draft.contact=c.email||''; }
-  else { draft.billName=''; draft.billOrg=t.school+' Boys HS Hockey'; draft.billAddr=''; draft.contact=''; }
+  // Master coach list wins for name + email (it's the source of truth); last invoice fills org/address and any gaps.
+  var saved=customers[t.key]||{}, c=contactFor(t.school);
+  var cName=c?titleCase(cleanCoach(c.coach)):'';
+  draft.billName = cName || saved.billName || '';
+  draft.contact  = (c&&c.email) || saved.contact || '';
+  draft.billOrg  = saved.billOrg || (c&&c.program) || (t.school+' Boys HS Hockey');
+  draft.billAddr = saved.billAddr || '';
   fillForm();
-  toast(saved? 'Filled from your last invoice to '+t.school : c? 'Coach info filled from contacts' : t.display+' selected');
+  toast(c? 'Coach '+(cName||'info')+' filled from your coach list' : (customers[t.key]? 'Filled from your last invoice to '+t.school : 'No coach found for '+t.school+' in your list'));
 }
 function renderTeamHead(){
   var has = draft.teamName || draft.logoUrl;
@@ -3291,7 +3313,7 @@ function buildPDF(d, imgs){
   var jsPDF=window.jspdf.jsPDF;
   var doc=new jsPDF({unit:'pt', format:'letter', compress:true});
   var W=612, M=40, R=W-M, t=totals(d), paid=d.status==='paid';
-  doc.setProperties({ title:'Invoice #'+d.number+' — '+(d.teamName||''), author:settings.bizName, subject:'Invoice', creator:'LLC Invoice Builder v1.1' });
+  doc.setProperties({ title:'Invoice #'+d.number+' — '+(d.teamName||''), author:settings.bizName, subject:'Invoice', creator:'LLC Invoice Builder v1.2' });
 
   /* ===== header band ===== */
   doc.setFillColor(NAVY); doc.rect(0,0,W,124,'F');
@@ -3611,7 +3633,7 @@ $('settingsSave').onclick=function(){
 };
 $('s-contactsFile').onchange=function(e){ var f=e.target.files[0]; if(!f) return; f.text().then(importContacts); };
 $('exportBtn').onclick=function(){
-  var data={app:'LLC Invoice Builder', version:'1.1', exported:new Date().toISOString(), settings:settings, history:history, customers:customers, contacts:contacts};
+  var data={app:'LLC Invoice Builder', version:'1.2', exported:new Date().toISOString(), settings:settings, history:history, customers:customers, contacts:contacts};
   var a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,1)],{type:'application/json'}));
   a.download='LLC Invoice Backup '+iso(new Date())+'.json'; a.click(); setTimeout(function(){URL.revokeObjectURL(a.href);},2000);
 };
@@ -3628,7 +3650,8 @@ $('importFile').onchange=function(e){
 
 /* ---------------- boot ---------------- */
 if(!window.jspdf){ document.body.innerHTML='<p style="padding:40px">PDF library failed to load.</p>'; return; }
-renderTierChips(); setContactsPill(); loadTeams(); fillForm();
+$('refillCoach').onclick=function(){ if(!draft.school){ toast('Pick a team first'); return; } if(fillBillFromContacts(true)) { refresh(); toast('Coach info refreshed'); } else toast('No coach found for '+draft.school+' in your list'); };
+renderTierChips(); setContactsPill(); loadTeams(); loadContacts(); fillForm();
 window.__llcinv = { get draft(){return draft;}, setTeams:setTeams, buildTeams:buildTeams, parseCSV:parseCSV, rowsToObjects:rowsToObjects, importContacts:importContacts, makePDF:makePDF, chooseTeam:chooseTeam };
 })();
 </script>
